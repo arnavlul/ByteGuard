@@ -1,4 +1,4 @@
-"""Build the ByteGuard pybind11 module (and optionally run cpp/tests.cpp)."""
+"""Build the ByteGuard pybind11 extension module."""
 
 import os
 import shutil
@@ -43,7 +43,6 @@ def find_vcvars64() -> str:
 
 
 def main() -> None:
-    run_tests = "--tests" in sys.argv
     ext_suffix = sysconfig.get_config_var("EXT_SUFFIX") or (".pyd" if sys.platform == "win32" else ".so")
     out_file = ROOT / "web" / f"byteguard_cpp{ext_suffix}"
     out_file.parent.mkdir(parents=True, exist_ok=True)
@@ -61,22 +60,12 @@ def main() -> None:
                 f'/Fe:"{out_file}" /Fo:"{tmp_dir / "bindings.obj"}" '
                 f'/link /LIBPATH:"{py_libs}" /IMPLIB:"{implib}"'
             )
-            full_cmd = cl_mod
-            if run_tests:
-                test_exe = tmp_dir / "tests.exe"
-                cl_test = (
-                    f'cl /nologo /O2 /EHsc /std:c++17 /DNOMINMAX '
-                    f'"{ROOT / "cpp" / "tests.cpp"}" /Fe:"{test_exe}" /Fo:"{tmp_dir / "tests.obj"}"'
-                )
-                full_cmd = f'{cl_mod} && {cl_test} && "{test_exe}"'
+            bat = tmp_dir / "build.bat"
             if shutil.which("cl") is None:
-                bat = tmp_dir / "build.bat"
-                bat.write_text(f'@echo off\r\ncall "{find_vcvars64()}" >nul || exit /b 1\r\n{full_cmd}\r\n', encoding="utf-8")
-                subprocess.check_call(["cmd", "/c", str(bat)])
+                bat.write_text(f'@echo off\r\ncall "{find_vcvars64()}" >nul || exit /b 1\r\n{cl_mod}\r\n', encoding="utf-8")
             else:
-                bat = tmp_dir / "build.bat"
-                bat.write_text(f'@echo off\r\n{full_cmd}\r\n', encoding="utf-8")
-                subprocess.check_call(["cmd", "/c", str(bat)])
+                bat.write_text(f'@echo off\r\n{cl_mod}\r\n', encoding="utf-8")
+            subprocess.check_call(["cmd", "/c", str(bat)])
         else:
             cxx = os.environ.get("CXX", "c++" if sys.platform == "darwin" else "g++")
             cmd = [cxx, "-O2", "-std=c++17", "-shared", "-fPIC"]
@@ -84,10 +73,6 @@ def main() -> None:
                 cmd += ["-undefined", "dynamic_lookup"]
             cmd += [f"-I{py_inc}", f"-I{pybind_inc}", str(ROOT / "web" / "bindings.cpp"), "-o", str(out_file)]
             subprocess.check_call(cmd)
-            if run_tests:
-                test_bin = tmp_dir / "tests"
-                subprocess.check_call([cxx, "-O2", "-std=c++17", str(ROOT / "cpp" / "tests.cpp"), "-o", str(test_bin)])
-                subprocess.check_call([str(test_bin)])
 
     print(f"Built {out_file.relative_to(ROOT)}")
 

@@ -4,6 +4,12 @@
 *.doc
 *.pptx
 
+# Local screenshots & report build tooling
+ss/
+.report_venv/
+report_assets/
+build_report.py
+
 # Python environments & caches
 .venv/
 venv/

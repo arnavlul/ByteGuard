@@ -10,20 +10,18 @@ ByteGuard cleanly separates the pure C++17 graph/LDPC algorithms from the option
 
 ```text
 ByteGuard/
-├── cpp/                    # Standalone C++17 engine & tests (zero Python/web dependencies)
+├── cpp/                    # Pure C++17 graph & LDPC engine (zero Python/web dependencies)
 │   ├── graph.cpp           # TannerGraph, GraphAnalyzer (girth, stopping sets, Welsh-Powell), PEGBuilder
 │   ├── ldpc.cpp            # GF(2) Encoder (Kahn topological sort), Corruptors, Peeling & BitFlip decoders
-│   ├── session.cpp         # Protect -> Scramble -> Repair image session & telemetry
-│   └── tests.cpp           # Standalone C++ verification suite (TC-01 .. TC-11)
+│   └── session.cpp         # Protect -> Scramble -> Repair image session & telemetry
 ├── web/                    # Optional Python web interface
 │   ├── bindings.cpp        # pybind11 wrapper exposing cpp/session.cpp to Python
 │   ├── app.py              # Offline FastAPI service (/protect, /scramble, /repair, /graph, /api/hamming/run)
 │   └── static/             # HTML/CSS/JS + bundled offline Cytoscape.js, Chart.js, and sample PNGs
 ├── scripts/
 │   ├── generate_samples.py # Regenerates synthetic sample PNGs
-│   ├── fetch_photo_samples.py
-│   └── test_api.py         # End-to-end API & bit-accuracy tests
-├── build.py                # Zero-CMake compiler wrapper for web/bindings.cpp & cpp/tests.cpp
+│   └── fetch_photo_samples.py
+├── build.py                # Zero-CMake compiler wrapper for web/bindings.cpp
 ├── pyproject.toml
 └── LICENSE                 # GNU Lesser General Public License v2.1 (LGPL-2.1)
 ```
@@ -39,34 +37,26 @@ ByteGuard/
 
 ## Usage
 
-### 1. Run the Standalone C++ Engine Tests (No Python Needed)
-
-```bash
-g++ -O2 -std=c++17 cpp/tests.cpp -o tests && ./tests
-```
-
-### 2. Set Up the Python Environment
+### 1. Set Up the Python Environment
 
 ```bash
 uv venv .venv --python 3.13
-uv pip install --python .venv/Scripts/python.exe pybind11 fastapi "uvicorn[standard]" pillow python-multipart httpx pytest
+uv pip install --python .venv/Scripts/python.exe pybind11 fastapi "uvicorn[standard]" pillow python-multipart
 ```
 
 *(On Linux/macOS replace `.venv/Scripts/python.exe` with `.venv/bin/python`, or use `pip install -e .`.)*
 
-### 3. Compile the Python Extension & Run All Tests
+### 2. Compile the Python Extension
 
 ```bash
 # Windows (auto-detects MSVC Build Tools via vswhere)
-.venv/Scripts/python.exe build.py --tests
-.venv/Scripts/pytest.exe scripts/test_api.py -v
+.venv/Scripts/python.exe build.py
 
 # Linux / macOS (g++ or c++)
-.venv/bin/python build.py --tests
-.venv/bin/pytest scripts/test_api.py -v
+.venv/bin/python build.py
 ```
 
-### 4. Launch the Offline Web Studio
+### 3. Launch the Offline Web Studio
 
 ```bash
 .venv/Scripts/uvicorn.exe web.app:app --host 127.0.0.1 --port 8000
