@@ -38,3 +38,16 @@ build_*/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Temporary & backup files
+*.tmp
+*.temp
+*.bak
+*.swp
+*~
+~$*
+*.log
+.cache/
+.coverage
+htmlcov/
+scratch/
