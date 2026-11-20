@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ByteGuard — Visual LDPC Error Correction on Tanner Graphs</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="/static/vendor/cytoscape.min.js" defer></script>
+  <script src="/static/vendor/chart.umd.min.js" defer></script>
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark">BG</div>
+      <div>
+        <h1>ByteGuard</h1>
+        <p class="subtitle">Visual Error Correction of Images using LDPC Codes on Tanner Graphs (C++17 Engine)</p>
+      </div>
+    </div>
+    <div class="topbar-badges">
+      <button id="btnOpenFileTop" type="button" class="btn btn-mini btn-open-top">Open Image...</button>
+      <span class="pill" id="badgeGraphStatus">PEG Graph: Ready</span>
+      <span class="pill pill-accent" id="badgeCodeRate">Rate R = 0.50</span>
+      <span class="pill" id="badgeSessionPhase">Phase: Protected</span>
+    </div>
+  </header>
+
+  <main class="workspace">
+    <!-- Left Control Panel -->
+    <aside class="controls-panel card">
+      <section class="control-group">
+        <h2>1. Image Source</h2>
+        <button id="btnOpenFile" type="button" class="btn btn-open-file full-width">
+          Open Image from Computer...
+        </button>
+        <input type="file" id="imageUpload" accept="image/png,image/jpeg,image/webp,image/bmp,image/gif,image/*" class="hidden">
+        <label class="checkbox-row">
+          <input type="checkbox" id="autoFitCheckbox" checked>
+          <span>Auto-fit large photos (&le; 320px)</span>
+        </label>
+        <div id="sampleList" class="sample-grid"></div>
+        <div class="meta-line" id="imageMetaLine">Loaded: taj_mahal.png (256 × 168 RGB)</div>
+      </section>
+
+      <section class="control-group">
+        <h2>2. LDPC Code (PEG Builder)</h2>
+        <div class="field-row">
+          <label for="blockSizeSelect">Block Size (n)</label>
+          <select id="blockSizeSelect">
+            <option value="288">288 bits (Fast / Small)</option>
+            <option value="576" selected>576 bits (Default)</option>
+            <option value="1024">1024 bits (High Capacity)</option>
+          </select>
+        </div>
+
+        <div class="field-col">
+          <div class="slider-header">
+            <label for="protectionSlider">Protection Level (m / n)</label>
+            <span class="mono-val" id="protectionLabel">0.50 (m = 288)</span>
+          </div>
+          <input type="range" id="protectionSlider" min="0.25" max="0.75" step="0.05" value="0.50">
+        </div>
+
+        <button id="btnProtect" type="button" class="btn btn-primary full-width">
+          <span class="btn-spinner hidden"></span>
+          <span class="btn-text">Protect (Build Graph &amp; Encode)</span>
+        </button>
+        <div class="status-line" id="protectStatusLine">Initializing Tanner graph...</div>
+      </section>
+
+      <section class="control-group">
+        <h2>3. Scramble (Damage Simulator)</h2>
+        <div class="mode-tabs" role="tablist">
+          <button class="mode-tab active" data-mode="lostchunk">Lost Chunks</button>
+          <button class="mode-tab" data-mode="bitflip">Bit Flips</button>
+          <button class="mode-tab" data-mode="brush">Scratch Brush</button>
+        </div>
+
+        <div class="field-col" id="damageLevelRow">
+          <div class="slider-header">
+            <label for="damageSlider">Damage Severity</label>
+            <span class="mono-val" id="damageLabel">20.0%</span>
+          </div>
+          <input type="range" id="damageSlider" min="0" max="60" step="0.5" value="20">
+        </div>
+
+        <div class="field-col hidden" id="brushControls">
+          <div class="slider-header">
+            <label for="brushRadiusSlider">Brush Radius (px)</label>
+            <span class="mono-val" id="brushRadiusLabel">7 px</span>
+          </div>
+          <input type="range" id="brushRadiusSlider" min="2" max="20" step="1" value="7">
+          <div class="brush-hint">
+            Drag mouse across the <strong>Original Image</strong> panel to draw a disc scratch.
+            (<span id="strokeCountLabel">0</span> dabs)
+          </div>
+          <button id="btnClearBrush" type="button" class="btn btn-ghost full-width">Clear Scratches</button>
+        </div>
+
+        <div class="field-row">
+          <label for="seedInput">Random Seed</label>
+          <input type="number" id="seedInput" value="42" min="0" max="999999">
+        </div>
+
+        <div id="recommendationBox" class="callout callout-ok">
+          Protection m/n=0.50 is ready for damage testing.
+        </div>
+
+        <button id="btnScramble" type="button" class="btn btn-warn full-width">
+          <span class="btn-spinner hidden"></span>
+          <span class="btn-text">Scramble (Inject Damage)</span>
+        </button>
+        <div class="status-line" id="scrambleStatusLine">Ready to inject damage.</div>
+      </section>
+
+      <section class="control-group">
+        <h2>4. Repair (Tanner Graph Decoder)</h2>
+        <div class="action-pair">
+          <button id="btnRepairAll" type="button" class="btn btn-success" disabled>
+            <span class="btn-spinner hidden"></span>
+            <span class="btn-text">Repair (Animate)</span>
+          </button>
+          <button id="btnRepairStep" type="button" class="btn btn-secondary" disabled>
+            <span class="btn-spinner hidden"></span>
+            <span class="btn-text">Step +1</span>
+          </button>
+        </div>
+        <div class="status-line" id="repairHintLine">
+          Scramble an image first, then watch Peeling / Bit-Flipping round by round.
+        </div>
+      </section>
+    </aside>
+
+    <!-- Right Visualization Workspace -->
+    <section class="stage-column">
+      <!-- 4 Image Panels -->
+      <div class="card">
+        <div class="section-head">
+          <h2>Image Recovery Comparison</h2>
+          <div class="playback-bar">
+            <button id="btnPlayPause" class="btn btn-mini" disabled>Play</button>
+            <button id="btnPrevRound" class="btn btn-mini" disabled>&lsaquo;</button>
+            <input type="range" id="roundSlider" min="0" max="0" value="0" disabled>
+            <button id="btnNextRound" class="btn btn-mini" disabled>&rsaquo;</button>
+            <span class="mono-val" id="roundReadout">Round 0 / 0</span>
+          </div>
+        </div>
+
+        <div class="image-grid">
+          <div class="image-panel">
+            <div class="panel-header">
+              <span>1. Original Image</span>
+              <span class="badge badge-neutral">100.0%</span>
+            </div>
+            <div class="canvas-wrap" id="originalCanvasWrap">
+              <canvas id="originalCanvas"></canvas>
+            </div>
+            <div class="panel-foot" id="brushFootHint">Source image (drop file here to load)</div>
+          </div>
+
+          <div class="image-panel">
+            <div class="panel-header">
+              <span>2. Damaged</span>
+              <span class="badge badge-danger" id="badgeDamagedPct">—</span>
+            </div>
+            <div class="canvas-wrap">
+              <img id="imgDamaged" alt="Damaged image">
+            </div>
+            <div class="panel-foot">Damaged (no error correction)</div>
+          </div>
+
+          <div class="image-panel panel-highlight">
+            <div class="panel-header">
+              <span>3. Repaired (Live Output)</span>
+              <span class="badge badge-success" id="badgeRepairedPct">—</span>
+            </div>
+            <div class="canvas-wrap">
+              <img id="imgRepaired" alt="Repaired image">
+            </div>
+            <div class="panel-foot" id="repairedPhaseFoot">Awaiting scramble</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Analytics Row: Accuracy Chart + Storage Overhead / Telemetry -->
+      <div class="analytics-grid">
+        <div class="card">
+          <div class="section-head">
+            <h2>Correct Bits (%) — Eq. (2)</h2>
+            <span class="mono-val" id="correctBitsFraction">0 / 0 bits</span>
+          </div>
+          <div class="chart-wrap">
+            <canvas id="accuracyChart"></canvas>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="section-head">
+            <h2>Storage Cost vs. 3× Copies &amp; Decoder Telemetry</h2>
+          </div>
+
+          <div class="overhead-bars">
+            <div class="ov-row">
+              <span>No Protection</span>
+              <div class="ov-track"><div class="ov-fill ov-base" style="width: 33.3%"></div></div>
+              <span class="mono-val" id="ovRawLabel">1.00× (0 B)</span>
+            </div>
+            <div class="ov-row">
+              <span>ByteGuard LDPC</span>
+              <div class="ov-track"><div class="ov-fill ov-ldpc" id="ovLdpcBar" style="width: 50%"></div></div>
+              <span class="mono-val" id="ovLdpcLabel">1.50× (0 B)</span>
+            </div>
+            <div class="ov-row">
+              <span>3× Naive Copies</span>
+              <div class="ov-track"><div class="ov-fill ov-triple" style="width: 100%"></div></div>
+              <span class="mono-val" id="ovTripleLabel">3.00× (0 B)</span>
+            </div>
+          </div>
+
+          <div class="kpi-grid">
+            <div class="kpi">
+              <div class="kpi-label">Failed Checks</div>
+              <div class="kpi-val" id="kpiFailedChecks">0 / 0</div>
+            </div>
+            <div class="kpi">
+              <div class="kpi-label">Missing Bits (?)</div>
+              <div class="kpi-val" id="kpiMissingBits">0</div>
+            </div>
+            <div class="kpi">
+              <div class="kpi-label">Blocks Repaired</div>
+              <div class="kpi-val" id="kpiBlocksRepaired">0 / 0</div>
+            </div>
+            <div class="kpi">
+              <div class="kpi-label">Stopping Set Bits</div>
+              <div class="kpi-val kpi-alert" id="kpiStoppingBits">0</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tanner Graph Explorer -->
+      <div class="card">
+        <div class="section-head wrap-head">
+          <div>
+            <h2>Tanner Graph &amp; Algorithm Inspector</h2>
+            <p class="small-note" id="graphSubtitle">
+              Inspecting the active damaged block's bipartite Tanner graph (BFS PEG + Welsh–Powell Coloring).
+            </p>
+          </div>
+          <div class="graph-view-tabs">
+            <button class="gv-tab active" data-view="focus" data-color="status">Block Focus</button>
+            <button class="gv-tab" data-view="focus" data-color="welsh_powell">Welsh–Powell Colors</button>
+            <button class="gv-tab" data-view="full" data-color="status">Full Block</button>
+            <button class="gv-tab" data-view="hamming" data-color="status">Hamming(7,4) Sandbox</button>
+          </div>
+        </div>
+
+        <!-- Telemetry strip -->
+        <div class="telemetry-strip">
+          <span>Girth: <strong id="telGirth">—</strong></span>
+          <span>Connected: <strong id="telConnected">—</strong></span>
+          <span>Vars / Checks: <strong id="telDims">—</strong></span>
+          <span>Edges: <strong id="telEdges">—</strong></span>
+          <span>Welsh–Powell Colors: <strong id="telColors">—</strong></span>
+          <span>Inspected Block: <strong id="telBlock">—</strong></span>
+        </div>
+
+        <!-- Hamming(7,4) Interactive Sandbox Strip (visible only in hamming view) -->
+        <div id="hammingControls" class="hamming-panel hidden">
+          <div class="hamming-row">
+            <div class="hamming-presets">
+              <span class="hamming-title">Presets (Synopsis Figures 1 &amp; 6):</span>
+              <button class="btn btn-mini" id="btnHammingTC06">TC-06: Lose v1, v3, v5 (3-step peel)</button>
+              <button class="btn btn-mini" id="btnHammingTC07">TC-07: Lose v1, v2, v3 (Stopping Set)</button>
+              <button class="btn btn-mini" id="btnHammingTC08">TC-08: Flip v4 (Bit-Flip 1 round)</button>
+            </div>
+            <div class="hamming-step-controls">
+              <button class="btn btn-mini" id="btnHammingPrev">&lsaquo; Prev</button>
+              <span class="mono-val" id="hammingStepLabel">Step 0 / 0</span>
+              <button class="btn btn-mini" id="btnHammingNext">Next &rsaquo;</button>
+            </div>
+          </div>
+          <div class="hamming-bits-bar" id="hammingBitsBar"></div>
+          <div class="meta-line" id="hammingExplainLine">
+            Click any bit pill to cycle: Intact → Missing (?) → Flipped. Watch C++ Peeling &amp; Bit-Flipping step-by-step.
+          </div>
+        </div>
+
+        <div class="cy-legend">
+          <span><i class="dot dot-ok"></i> Intact Bit</span>
+          <span><i class="dot dot-fixed"></i> Repaired This Round</span>
+          <span><i class="dot dot-missing"></i> Missing Bit (?)</span>
+          <span><i class="dot dot-wrong"></i> Flipped Bit</span>
+          <span><i class="dot dot-stopping"></i> Stopping Set</span>
+          <span><i class="dot dot-chk-ok"></i> Check Passed</span>
+          <span><i class="dot dot-chk-fail"></i> Check Failed</span>
+        </div>
+
+        <div id="cyContainer" class="cy-box"></div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
