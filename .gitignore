@@ -10,6 +10,7 @@ ss/
 .report_venv/
 report_assets/
 build_report.py
+start_byteguard.bat
 
 # Python environments & caches
 .venv/

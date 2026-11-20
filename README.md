@@ -18,9 +18,6 @@ ByteGuard/
 │   ├── bindings.cpp        # pybind11 wrapper exposing cpp/session.cpp to Python
 │   ├── app.py              # Offline FastAPI service (/protect, /scramble, /repair, /graph, /api/hamming/run)
 │   └── static/             # HTML/CSS/JS + bundled offline Cytoscape.js, Chart.js, and sample PNGs
-├── scripts/
-│   ├── generate_samples.py # Regenerates synthetic sample PNGs
-│   └── fetch_photo_samples.py
 ├── build.py                # Zero-CMake compiler wrapper for web/bindings.cpp
 ├── pyproject.toml
 └── LICENSE                 # GNU Lesser General Public License v2.1 (LGPL-2.1)

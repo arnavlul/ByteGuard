@@ -51,8 +51,10 @@ struct Snapshot {
 };
 
 string normalizeMode(string s) {
-    for (char& ch : s) {
-        ch = (char)tolower((unsigned char)ch);
+    for (int i = 0; i < (int)s.size(); i++) {
+        if (s[i] >= 'A' && s[i] <= 'Z') {
+            s[i] = (char)(s[i] - 'A' + 'a');
+        }
     }
     if (s == "bitflip" || s == "bit_flip" || s == "flip") {
         return "bitflip";
@@ -78,15 +80,23 @@ void applyDamage(string normMode, Bits& bits, double level, uint32_t seed,
 }
 
 bool blockHasUnknown(Bits& b) {
-    return find(b.begin(), b.end(), BIT_UNKNOWN) != b.end();
+    for (int bit : b) {
+        if (bit == BIT_UNKNOWN) {
+            return true;
+        }
+    }
+    return false;
 }
 
 bool anyCheckHasSingleUnknown(TannerGraph& g, Bits& b) {
-    for (int c = 0; c < g.numChecks(); ++c) {
+    for (int c = 0; c < g.numChecks(); c++) {
         int unk = 0;
         for (int v : g.chkNeighbors(c)) {
-            if (b[v] == BIT_UNKNOWN && ++unk > 1) {
-                break;
+            if (b[v] == BIT_UNKNOWN) {
+                unk++;
+                if (unk > 1) {
+                    break;
+                }
             }
         }
         if (unk == 1) {
@@ -98,7 +108,7 @@ bool anyCheckHasSingleUnknown(TannerGraph& g, Bits& b) {
 
 vector<int> lostIndices(Bits& b) {
     vector<int> out;
-    for (int v = 0; v < (int)b.size(); ++v) {
+    for (int v = 0; v < (int)b.size(); v++) {
         if (b[v] == BIT_UNKNOWN) {
             out.push_back(v);
         }
@@ -131,8 +141,8 @@ class Session {
 
     Bits extractRawImageBits() {
         Bits raw(image_.pixels.size() * 8U, 0);
-        for (size_t i = 0; i < image_.pixels.size(); ++i) {
-            for (int bit = 0; bit < 8; ++bit) {
+        for (size_t i = 0; i < image_.pixels.size(); i++) {
+            for (int bit = 0; bit < 8; bit++) {
                 raw[i * 8U + bit] = (image_.pixels[i] >> (7 - bit)) & 1;
             }
         }
@@ -140,10 +150,14 @@ class Session {
     }
 
     Image bitsToImage(Bits& rawBits) {
-        Image out{image_.width, image_.height, image_.channels,
-                  vector<uint8_t>(image_.pixels.size(), 0)};
+        Image out;
+        out.width = image_.width;
+        out.height = image_.height;
+        out.channels = image_.channels;
+        out.pixels.assign(image_.pixels.size(), 0);
+
         size_t limit = min(rawBits.size(), out.pixels.size() * 8U);
-        for (size_t i = 0; i < limit; ++i) {
+        for (size_t i = 0; i < limit; i++) {
             if (rawBits[i] == 1) {
                 out.pixels[i / 8U] |= (uint8_t)(1U << (7 - (int)(i % 8U)));
             }
@@ -154,8 +168,8 @@ class Session {
     Image reconstructImage(vector<Bits>& blocks) {
         size_t totalBits = image_.pixels.size() * 8U;
         Bits raw(totalBits, 0);
-        auto& infoPos = encoder_.infoPositions();
-        for (size_t t = 0; t < totalBits; ++t) {
+        vector<int>& infoPos = encoder_.infoPositions();
+        for (size_t t = 0; t < totalBits; t++) {
             raw[t] = blocks[t % totalBlocks_][infoPos[t / totalBlocks_]];
         }
         return bitsToImage(raw);
@@ -166,9 +180,9 @@ class Session {
             return 0.0;
         }
         size_t matches = 0;
-        for (size_t i = 0; i < rawA.size(); ++i) {
+        for (size_t i = 0; i < rawA.size(); i++) {
             if (rawA[i] != BIT_UNKNOWN && rawA[i] == rawB[i]) {
-                ++matches;
+                matches++;
             }
         }
         return (100.0 * (double)matches) / (double)rawA.size();
@@ -179,16 +193,16 @@ class Session {
         size_t n = (size_t)graph_.numVars();
         size_t k = (size_t)encoder_.numInfoBits();
         int r = encoder_.numParityBits();
-        auto& infoPos = encoder_.infoPositions();
-        auto& parityPos = encoder_.parityPositions();
+        vector<int>& infoPos = encoder_.infoPositions();
+        vector<int>& parityPos = encoder_.parityPositions();
         size_t dataSpan = (size_t)totalBlocks_ * k;
 
         Bits stream((size_t)totalBlocks_ * n, 0);
-        for (size_t t = 0; t < dataSpan; ++t) {
+        for (size_t t = 0; t < dataSpan; t++) {
             stream[t] = originalBlocks_[t % totalBlocks_][infoPos[t / totalBlocks_]];
         }
-        for (int p = 0; p < r; ++p) {
-            for (int b = 0; b < totalBlocks_; ++b) {
+        for (int p = 0; p < r; p++) {
+            for (int b = 0; b < totalBlocks_; b++) {
                 stream[dataSpan + (size_t)p * totalBlocks_ + b] =
                     originalBlocks_[b][parityPos[p]];
             }
@@ -199,15 +213,15 @@ class Session {
     void unpackStream(Bits& stream) {
         size_t k = (size_t)encoder_.numInfoBits();
         int r = encoder_.numParityBits();
-        auto& infoPos = encoder_.infoPositions();
-        auto& parityPos = encoder_.parityPositions();
+        vector<int>& infoPos = encoder_.infoPositions();
+        vector<int>& parityPos = encoder_.parityPositions();
         size_t dataSpan = (size_t)totalBlocks_ * k;
 
-        for (size_t t = 0; t < dataSpan; ++t) {
+        for (size_t t = 0; t < dataSpan; t++) {
             workingBlocks_[t % totalBlocks_][infoPos[t / totalBlocks_]] = stream[t];
         }
-        for (int p = 0; p < r; ++p) {
-            for (int b = 0; b < totalBlocks_; ++b) {
+        for (int p = 0; p < r; p++) {
+            for (int b = 0; b < totalBlocks_; b++) {
                 workingBlocks_[b][parityPos[p]] =
                     stream[dataSpan + (size_t)p * totalBlocks_ + b];
             }
@@ -221,30 +235,41 @@ class Session {
         }
         size_t recovered = 0;
         if (normMode == "brush") {
-            auto mask = BrushCorruptor(
+            vector<int> mask = BrushCorruptor(
                 image_.width, image_.height, image_.channels, strokes, seed).pixelMask(level);
             size_t totalPixels = mask.size();
             size_t bitsPerPixel = (size_t)image_.channels * 8U;
-            for (size_t i = 0; i < rawOriginal.size(); ++i) {
+            for (size_t i = 0; i < rawOriginal.size(); i++) {
                 size_t pix = (i / bitsPerPixel) % totalPixels;
-                bool c0 = mask[pix] == 0;
-                bool c1 = totalPixels < 3U ? c0 : mask[(pix + totalPixels / 3U) % totalPixels] == 0;
-                bool c2 = totalPixels < 3U ? c0 : mask[(pix + 2U * totalPixels / 3U) % totalPixels] == 0;
-                recovered += (c0 || c1 || c2);
+                bool c0 = (mask[pix] == 0);
+                bool c1 = c0;
+                bool c2 = c0;
+                if (totalPixels >= 3U) {
+                    c1 = (mask[(pix + totalPixels / 3U) % totalPixels] == 0);
+                    c2 = (mask[(pix + 2U * totalPixels / 3U) % totalPixels] == 0);
+                }
+                if (c0 || c1 || c2) {
+                    recovered++;
+                }
             }
         } else {
             vector<Bits> copies(3, rawOriginal);
-            for (int c = 0; c < 3; ++c) {
+            for (int c = 0; c < 3; c++) {
                 applyDamage(normMode, copies[c], level, seed + (uint32_t)((c + 1) * 101), image_, strokes);
             }
-            for (size_t i = 0; i < rawOriginal.size(); ++i) {
+            for (size_t i = 0; i < rawOriginal.size(); i++) {
                 if (normMode == "bitflip") {
-                    int maj = (copies[0][i] + copies[1][i] + copies[2][i] >= 2) ? 1 : 0;
-                    recovered += (maj == rawOriginal[i]);
+                    int ones = copies[0][i] + copies[1][i] + copies[2][i];
+                    int maj = (ones >= 2) ? 1 : 0;
+                    if (maj == rawOriginal[i]) {
+                        recovered++;
+                    }
                 } else {
-                    recovered += (copies[0][i] != BIT_UNKNOWN ||
-                                  copies[1][i] != BIT_UNKNOWN ||
-                                  copies[2][i] != BIT_UNKNOWN);
+                    if (copies[0][i] != BIT_UNKNOWN ||
+                        copies[1][i] != BIT_UNKNOWN ||
+                        copies[2][i] != BIT_UNKNOWN) {
+                        recovered++;
+                    }
                 }
             }
         }
@@ -252,14 +277,17 @@ class Session {
     }
 
     void updateRepairFlags() {
-        bool anyUnk = false, morePeelable = false, anyFail = false;
-        for (auto& workB : workingBlocks_) {
-            if (blockHasUnknown(workB)) {
+        bool anyUnk = false;
+        bool morePeelable = false;
+        bool anyFail = false;
+
+        for (int b = 0; b < totalBlocks_; b++) {
+            if (blockHasUnknown(workingBlocks_[b])) {
                 anyUnk = true;
-                if (anyCheckHasSingleUnknown(graph_, workB)) {
+                if (anyCheckHasSingleUnknown(graph_, workingBlocks_[b])) {
                     morePeelable = true;
                 }
-            } else if (!graph_.isValidCodeword(workB)) {
+            } else if (!graph_.isValidCodeword(workingBlocks_[b])) {
                 anyFail = true;
             }
         }
@@ -270,14 +298,14 @@ class Session {
     Metrics computeCurrentMetrics() {
         Metrics m;
         int n = graph_.numVars();
-        auto& infoPos = encoder_.infoPositions();
+        vector<int>& infoPos = encoder_.infoPositions();
         size_t totalImageBits = image_.pixels.size() * 8U;
 
         m.originalBytes = image_.pixels.size();
         m.protectedBytes = ((size_t)totalBlocks_ * n + 7U) / 8U;
         m.tripleCopyBytes = m.originalBytes * 3U;
         m.codeRate = (n > 0) ? ((double)encoder_.numInfoBits() / n) : 0.0;
-        m.ldpcOverheadRatio = m.originalBytes > 0
+        m.ldpcOverheadRatio = (m.originalBytes > 0)
             ? ((double)m.protectedBytes / (double)m.originalBytes)
             : 1.0;
         m.tripleCopyOverheadRatio = 3.0;
@@ -286,18 +314,18 @@ class Session {
         m.totalChecks = totalBlocks_ * graph_.numChecks();
         m.round = repairRound_;
 
-        for (size_t t = 0; t < totalImageBits; ++t) {
+        for (size_t t = 0; t < totalImageBits; t++) {
             size_t b = t % totalBlocks_;
             int v = infoPos[t / totalBlocks_];
             int cur = workingBlocks_[b][v];
             if (cur == BIT_UNKNOWN) {
-                ++m.remainingUnknownBits;
+                m.remainingUnknownBits++;
             } else if (cur == originalBlocks_[b][v]) {
-                ++m.correctDataBits;
+                m.correctDataBits++;
             }
         }
 
-        m.protectedCorrectPct = totalImageBits > 0
+        m.protectedCorrectPct = (totalImageBits > 0)
             ? (100.0 * (double)m.correctDataBits) / (double)totalImageBits
             : 100.0;
         m.unprotectedCorrectPct = unprotectedCorrectPct_;
@@ -305,10 +333,12 @@ class Session {
         m.tripleCopyCorrectPct = tripleCopyCorrectPct_;
 
         GraphAnalyzer analyzer(graph_);
-        for (int b = 0; b < totalBlocks_; ++b) {
-            m.fullyRepairedBlocks += (workingBlocks_[b] == originalBlocks_[b]);
+        for (int b = 0; b < totalBlocks_; b++) {
+            if (workingBlocks_[b] == originalBlocks_[b]) {
+                m.fullyRepairedBlocks++;
+            }
             m.failedChecks += (int)graph_.failedChecks(workingBlocks_[b]).size();
-            auto lost = lostIndices(workingBlocks_[b]);
+            vector<int> lost = lostIndices(workingBlocks_[b]);
             if (!lost.empty()) {
                 m.stoppingSetBitsTotal += (int)analyzer.stoppingSet(lost).size();
             }
@@ -321,18 +351,21 @@ class Session {
         if (totalBlocks_ <= 0 || workingBlocks_.empty()) {
             return snap;
         }
-        int safeIdx = clamp(blockIdx, 0, totalBlocks_ - 1);
+        int safeIdx = blockIdx;
+        if (safeIdx < 0) safeIdx = 0;
+        if (safeIdx >= totalBlocks_) safeIdx = totalBlocks_ - 1;
+
         snap.blockIndex = safeIdx;
         snap.round = round;
         snap.bits = workingBlocks_[safeIdx];
         snap.originalBits = originalBlocks_[safeIdx];
         snap.newlyFixedVars = newlyFixed;
 
-        snap.checkFailed.resize(graph_.numChecks(), false);
-        for (int c = 0; c < graph_.numChecks(); ++c) {
+        snap.checkFailed.assign(graph_.numChecks(), false);
+        for (int c = 0; c < graph_.numChecks(); c++) {
             snap.checkFailed[c] = !graph_.isCheckSatisfied(c, snap.bits);
         }
-        auto lost = lostIndices(snap.bits);
+        vector<int> lost = lostIndices(snap.bits);
         if (!lost.empty()) {
             snap.stoppingSet = GraphAnalyzer(graph_).stoppingSet(lost);
         }
@@ -377,13 +410,12 @@ public:
         totalBlocks_ = max(1, (int)((raw.size() + k - 1U) / k));
 
         vector<Bits> dataBlocks(totalBlocks_, Bits(k, 0));
-        for (size_t t = 0; t < raw.size(); ++t) {
+        for (size_t t = 0; t < raw.size(); t++) {
             dataBlocks[t % totalBlocks_][t / totalBlocks_] = raw[t];
         }
 
         originalBlocks_.clear();
-        originalBlocks_.reserve(totalBlocks_);
-        for (int b = 0; b < totalBlocks_; ++b) {
+        for (int b = 0; b < totalBlocks_; b++) {
             originalBlocks_.push_back(encoder_.encode(dataBlocks[b]));
         }
 
@@ -409,7 +441,7 @@ public:
             protect();
         }
         string normMode = normalizeMode(mode);
-        double clampedLevel = clamp(level, 0.0, 1.0);
+        double clampedLevel = clamp01(level);
 
         workingBlocks_ = originalBlocks_;
         history_.clear();
@@ -426,12 +458,15 @@ public:
         unprotectedCorrectPct_ = computeCorrectPct(rawOriginal, unprotBits);
         tripleCopyCorrectPct_ = simulateTripleCopy(rawOriginal, normMode, clampedLevel, seed, strokes);
 
+        // Pick the most damaged block to inspect in the graph visualizer
         int bestBlock = 0;
         int maxErrors = -1;
-        for (int b = 0; b < totalBlocks_; ++b) {
+        for (int b = 0; b < totalBlocks_; b++) {
             int errs = 0;
-            for (int v = 0; v < graph_.numVars(); ++v) {
-                errs += (workingBlocks_[b][v] != originalBlocks_[b][v]);
+            for (int v = 0; v < graph_.numVars(); v++) {
+                if (workingBlocks_[b][v] != originalBlocks_[b][v]) {
+                    errs++;
+                }
             }
             if (errs > maxErrors) {
                 maxErrors = errs;
@@ -440,14 +475,12 @@ public:
         }
         inspectedBlockIdx_ = (maxErrors > 0) ? bestBlock : 0;
 
-        auto layers = GraphAnalyzer(graph_).layerSchedule();
+        vector<vector<int>> layers = GraphAnalyzer(graph_).layerSchedule();
         peelingDecoders_.clear();
         bitFlipDecoders_.clear();
-        peelingDecoders_.reserve(totalBlocks_);
-        bitFlipDecoders_.reserve(totalBlocks_);
-        for (int b = 0; b < totalBlocks_; ++b) {
-            peelingDecoders_.emplace_back(graph_, 100);
-            bitFlipDecoders_.emplace_back(graph_, layers, 25);
+        for (int b = 0; b < totalBlocks_; b++) {
+            peelingDecoders_.push_back(PeelingDecoder(graph_, 100));
+            bitFlipDecoders_.push_back(BitFlipDecoder(graph_, layers, 25));
         }
 
         updateRepairFlags();
@@ -472,7 +505,7 @@ public:
         vector<int> inspectedFixed;
         if (!peelingDone_) {
             bool peeledAny = false;
-            for (int b = 0; b < totalBlocks_; ++b) {
+            for (int b = 0; b < totalBlocks_; b++) {
                 if (blockHasUnknown(workingBlocks_[b]) && peelingDecoders_[b].step(workingBlocks_[b])) {
                     peeledAny = true;
                     if (b == inspectedBlockIdx_) {
@@ -481,7 +514,7 @@ public:
                 }
             }
             if (peeledAny) {
-                ++repairRound_;
+                repairRound_++;
                 updateRepairFlags();
                 history_.push_back(makeSnapshot("peeling", inspectedFixed));
                 return history_.back();
@@ -491,8 +524,8 @@ public:
 
         if (peelingDone_ && !bitFlipDone_) {
             bool flippedAny = false;
-            for (int b = 0; b < totalBlocks_; ++b) {
-                auto& workB = workingBlocks_[b];
+            for (int b = 0; b < totalBlocks_; b++) {
+                Bits& workB = workingBlocks_[b];
                 if (blockHasUnknown(workB) || graph_.isValidCodeword(workB)) {
                     continue;
                 }
@@ -507,7 +540,7 @@ public:
                 bitFlipDone_ = true;
                 return history_.back();
             }
-            ++repairRound_;
+            repairRound_++;
             updateRepairFlags();
             history_.push_back(makeSnapshot("bitflip", inspectedFixed));
             return history_.back();
@@ -552,7 +585,13 @@ public:
     int inspectedBlockIdx() { return inspectedBlockIdx_; }
 
     void setInspectedBlock(int blockIdx) {
-        inspectedBlockIdx_ = (totalBlocks_ <= 0) ? 0 : clamp(blockIdx, 0, totalBlocks_ - 1);
+        if (totalBlocks_ <= 0) {
+            inspectedBlockIdx_ = 0;
+            return;
+        }
+        if (blockIdx < 0) blockIdx = 0;
+        if (blockIdx >= totalBlocks_) blockIdx = totalBlocks_ - 1;
+        inspectedBlockIdx_ = blockIdx;
     }
 
     bool isRepairFinished() { return peelingDone_ && bitFlipDone_; }

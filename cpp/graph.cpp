@@ -1,13 +1,10 @@
 #pragma once
 
 #include <algorithm>
-#include <cctype>
+#include <climits>
 #include <cmath>
 #include <cstdint>
-#include <cstring>
 #include <iostream>
-#include <limits>
-#include <numeric>
 #include <queue>
 #include <random>
 #include <set>
@@ -30,10 +27,12 @@ class TannerGraph {
     vector<vector<int>> chkAdj;
 
 public:
-    TannerGraph(int vars = 0, int checks = 0) : n(vars), m(checks) {
-        if (n < 0 || m < 0) {
+    TannerGraph(int vars = 0, int checks = 0) {
+        if (vars < 0 || checks < 0) {
             throw invalid_argument("TannerGraph dimensions must be non-negative");
         }
+        n = vars;
+        m = checks;
         varAdj.resize(n);
         chkAdj.resize(m);
     }
@@ -45,11 +44,11 @@ public:
         int rows = (int)H.size();
         int cols = (int)H[0].size();
         TannerGraph g(cols, rows);
-        for (int c = 0; c < rows; ++c) {
+        for (int c = 0; c < rows; c++) {
             if ((int)H[c].size() != cols) {
                 throw invalid_argument("Incidence matrix rows must all have the same width");
             }
-            for (int v = 0; v < cols; ++v) {
+            for (int v = 0; v < cols; v++) {
                 if (H[c][v] != 0) {
                     g.addEdge(v, c);
                 }
@@ -59,25 +58,31 @@ public:
     }
 
     static TannerGraph hamming74() {
-        return fromIncidenceMatrix({
+        Matrix H = {
             {1, 1, 0, 1, 1, 0, 0},
             {1, 0, 1, 1, 0, 1, 0},
-            {0, 1, 1, 1, 0, 0, 1},
-        });
+            {0, 1, 1, 1, 0, 0, 1}
+        };
+        return fromIncidenceMatrix(H);
     }
 
     void addEdge(int v, int c) {
-        auto& vn = varAdj.at(v);
-        auto& cn = chkAdj.at(c);
-        if (find(vn.begin(), vn.end(), c) == vn.end()) {
-            vn.push_back(c);
-            cn.push_back(v);
+        if (v < 0 || v >= n || c < 0 || c >= m) {
+            throw out_of_range("Node index out of range in addEdge");
         }
+        // Avoid duplicate edges so the graph stays a simple bipartite graph
+        for (int existing : varAdj[v]) {
+            if (existing == c) {
+                return;
+            }
+        }
+        varAdj[v].push_back(c);
+        chkAdj[c].push_back(v);
     }
 
     Matrix incidenceMatrix() {
         Matrix H(m, vector<int>(n, 0));
-        for (int c = 0; c < m; ++c) {
+        for (int c = 0; c < m; c++) {
             for (int v : chkAdj[c]) {
                 H[c][v] = 1;
             }
@@ -92,8 +97,8 @@ public:
 
     int numEdges() {
         int total = 0;
-        for (auto& nbrs : varAdj) {
-            total += (int)nbrs.size();
+        for (int v = 0; v < n; v++) {
+            total += (int)varAdj[v].size();
         }
         return total;
     }
@@ -102,12 +107,14 @@ public:
     vector<int>& chkNeighbors(int c) { return chkAdj.at(c); }
 
     bool isCheckSatisfied(int c, const Bits& bits) {
-        auto& nbrs = chkAdj.at(c);
+        if (c < 0 || c >= m) {
+            throw out_of_range("Check index out of range");
+        }
         if ((int)bits.size() != n) {
             throw invalid_argument("Bit vector length must equal numVars()");
         }
         int parity = 0;
-        for (int v : nbrs) {
+        for (int v : chkAdj[c]) {
             if (bits[v] == BIT_UNKNOWN) {
                 return false;
             }
@@ -118,7 +125,7 @@ public:
 
     vector<int> failedChecks(const Bits& bits) {
         vector<int> failed;
-        for (int c = 0; c < m; ++c) {
+        for (int c = 0; c < m; c++) {
             if (!isCheckSatisfied(c, bits)) {
                 failed.push_back(c);
             }
@@ -130,7 +137,7 @@ public:
         if ((int)bits.size() != n) {
             return false;
         }
-        for (int c = 0; c < m; ++c) {
+        for (int c = 0; c < m; c++) {
             if (!isCheckSatisfied(c, bits)) {
                 return false;
             }
@@ -143,23 +150,29 @@ public:
 class GraphAnalyzer {
     TannerGraph* g;
 
-    template <typename Fn>
-    void forEachNeighbor(int u, Fn fn) {
+    // Builds one combined adjacency list where:
+    //   variable nodes are 0 .. n-1
+    //   check nodes    are n .. n+m-1
+    vector<vector<int>> buildCombinedGraph() {
         int n = g->numVars();
-        if (u < n) {
-            for (int c : g->varNeighbors(u)) {
-                fn(n + c);
-            }
-        } else {
-            for (int v : g->chkNeighbors(u - n)) {
-                fn(v);
+        int m = g->numChecks();
+        vector<vector<int>> adj(n + m);
+        for (int v = 0; v < n; v++) {
+            for (int c : g->varNeighbors(v)) {
+                int chkNode = n + c;
+                adj[v].push_back(chkNode);
+                adj[chkNode].push_back(v);
             }
         }
+        return adj;
     }
 
 public:
-    GraphAnalyzer(TannerGraph& graph) : g(&graph) {}
+    GraphAnalyzer(TannerGraph& graph) {
+        g = &graph;
+    }
 
+    // Finds shortest cycle length (girth) using BFS from each variable node.
     int girth() {
         int n = g->numVars();
         int m = g->numChecks();
@@ -168,62 +181,80 @@ public:
             return 0;
         }
 
-        int INF = numeric_limits<int>::max();
-        int best = INF;
-        vector<int> dist(total);
-        vector<int> parent(total);
+        vector<vector<int>> adj = buildCombinedGraph();
+        int best = INT_MAX;
 
-        for (int startVar = 0; startVar < n; ++startVar) {
-            fill(dist.begin(), dist.end(), -1);
-            fill(parent.begin(), parent.end(), -1);
+        for (int start = 0; start < n; start++) {
+            vector<int> dist(total, -1);
+            vector<int> parent(total, -1);
             queue<int> q;
-            dist[startVar] = 0;
-            q.push(startVar);
+
+            dist[start] = 0;
+            q.push(start);
 
             while (!q.empty()) {
                 int u = q.front();
                 q.pop();
-                if (best != INF && 2 * dist[u] + 2 >= best) {
+
+                // No shorter cycle is possible deeper in this BFS tree
+                if (best != INT_MAX && 2 * dist[u] + 2 >= best) {
                     break;
                 }
-                forEachNeighbor(u, [&](int w) {
+
+                for (int w : adj[u]) {
                     if (dist[w] == -1) {
                         dist[w] = dist[u] + 1;
                         parent[w] = u;
                         q.push(w);
                     } else if (w != parent[u]) {
-                        best = min(best, dist[u] + dist[w] + 1);
+                        int cycleLen = dist[u] + dist[w] + 1;
+                        if (cycleLen < best) {
+                            best = cycleLen;
+                        }
                     }
-                });
+                }
+
+                // 4 is the smallest possible cycle in any bipartite graph
                 if (best == 4) {
                     return 4;
                 }
             }
         }
-        return (best == INF) ? 0 : best;
+
+        if (best == INT_MAX) {
+            return 0;
+        }
+        return best;
     }
 
+    // Checks if the whole Tanner graph is a single connected component using BFS.
     bool isConnected() {
-        int total = g->numVars() + g->numChecks();
+        int n = g->numVars();
+        int m = g->numChecks();
+        int total = n + m;
         if (total <= 1) {
             return true;
         }
-        vector<int> visited(total, 0);
+
+        vector<vector<int>> adj = buildCombinedGraph();
+        vector<bool> visited(total, false);
         queue<int> q;
-        visited[0] = 1;
+
+        visited[0] = true;
         q.push(0);
         int count = 0;
 
         while (!q.empty()) {
             int u = q.front();
             q.pop();
-            ++count;
-            forEachNeighbor(u, [&](int w) {
+            count++;
+
+            for (int w : adj[u]) {
                 if (!visited[w]) {
-                    visited[w] = 1;
+                    visited[w] = true;
                     q.push(w);
                 }
-            });
+            }
         }
         return count == total;
     }
@@ -232,18 +263,21 @@ public:
     vector<int> stoppingSet(vector<int> lostVars) {
         int n = g->numVars();
         int m = g->numChecks();
-        vector<int> isLost(n, 0);
+
+        vector<bool> isLost(n, false);
         for (int v : lostVars) {
             if (v >= 0 && v < n) {
-                isLost[v] = 1;
+                isLost[v] = true;
             }
         }
 
         vector<int> unknownCount(m, 0);
         queue<int> q;
-        for (int c = 0; c < m; ++c) {
+        for (int c = 0; c < m; c++) {
             for (int v : g->chkNeighbors(c)) {
-                unknownCount[c] += isLost[v];
+                if (isLost[v]) {
+                    unknownCount[c]++;
+                }
             }
             if (unknownCount[c] == 1) {
                 q.push(c);
@@ -256,6 +290,7 @@ public:
             if (unknownCount[c] != 1) {
                 continue;
             }
+
             int target = -1;
             for (int v : g->chkNeighbors(c)) {
                 if (isLost[v]) {
@@ -266,16 +301,18 @@ public:
             if (target == -1) {
                 continue;
             }
-            isLost[target] = 0;
+
+            isLost[target] = false;
             for (int c2 : g->varNeighbors(target)) {
-                if (--unknownCount[c2] == 1) {
+                unknownCount[c2]--;
+                if (unknownCount[c2] == 1) {
                     q.push(c2);
                 }
             }
         }
 
         vector<int> remaining;
-        for (int v = 0; v < n; ++v) {
+        for (int v = 0; v < n; v++) {
             if (isLost[v]) {
                 remaining.push_back(v);
             }
@@ -291,55 +328,75 @@ public:
             return {};
         }
 
+        // Step 1: Build conflict graph (edge between two checks if they share a variable)
+        vector<vector<bool>> hasEdge(m, vector<bool>(m, false));
         vector<vector<int>> conflictAdj(m);
-        for (int v = 0; v < n; ++v) {
-            auto& chks = g->varNeighbors(v);
-            for (size_t i = 0; i < chks.size(); ++i) {
-                for (size_t j = i + 1; j < chks.size(); ++j) {
-                    conflictAdj[chks[i]].push_back(chks[j]);
-                    conflictAdj[chks[j]].push_back(chks[i]);
+        for (int v = 0; v < n; v++) {
+            vector<int>& chks = g->varNeighbors(v);
+            for (int i = 0; i < (int)chks.size(); i++) {
+                for (int j = i + 1; j < (int)chks.size(); j++) {
+                    int c1 = chks[i];
+                    int c2 = chks[j];
+                    if (!hasEdge[c1][c2]) {
+                        hasEdge[c1][c2] = true;
+                        hasEdge[c2][c1] = true;
+                        conflictAdj[c1].push_back(c2);
+                        conflictAdj[c2].push_back(c1);
+                    }
                 }
             }
         }
-        for (auto& nbrs : conflictAdj) {
-            sort(nbrs.begin(), nbrs.end());
-            nbrs.erase(unique(nbrs.begin(), nbrs.end()), nbrs.end());
+
+        // Step 2: Sort check nodes by descending conflict degree
+        // Using (-degree, checkIndex) so standard sort() puts largest degree first
+        vector<pair<int, int>> degOrder;
+        for (int c = 0; c < m; c++) {
+            int deg = (int)conflictAdj[c].size();
+            degOrder.push_back({-deg, c});
         }
+        sort(degOrder.begin(), degOrder.end());
 
-        vector<int> order(m);
-        iota(order.begin(), order.end(), 0);
-        sort(order.begin(), order.end(), [&](int a, int b) {
-            size_t da = conflictAdj[a].size();
-            size_t db = conflictAdj[b].size();
-            return (da != db) ? (da > db) : (a < b);
-        });
-
+        // Step 3: Greedy coloring pass by pass (Welsh-Powell)
         vector<int> colors(m, -1);
         int colored = 0;
-        for (int color = 0; colored < m; ++color) {
-            for (int c : order) {
+        for (int color = 0; colored < m; color++) {
+            for (int i = 0; i < m; i++) {
+                int c = degOrder[i].second;
                 if (colors[c] != -1) {
                     continue;
                 }
-                bool clash = any_of(conflictAdj[c].begin(), conflictAdj[c].end(),
-                                    [&](int nbr) { return colors[nbr] == color; });
+                bool clash = false;
+                for (int nbr : conflictAdj[c]) {
+                    if (colors[nbr] == color) {
+                        clash = true;
+                        break;
+                    }
+                }
                 if (!clash) {
                     colors[c] = color;
-                    ++colored;
+                    colored++;
                 }
             }
         }
         return colors;
     }
 
+    // Groups check nodes by their Welsh-Powell color class.
     vector<vector<int>> layerSchedule() {
         vector<int> colors = checkColors();
         if (colors.empty()) {
             return {};
         }
-        int numColors = *max_element(colors.begin(), colors.end()) + 1;
-        vector<vector<int>> layers(numColors);
-        for (int c = 0; c < (int)colors.size(); ++c) {
+
+        int maxColor = 0;
+        for (int col : colors) {
+            if (col > maxColor) {
+                maxColor = col;
+            }
+        }
+
+        vector<vector<int>> layers(maxColor + 1);
+        for (int c = 0; c < (int)colors.size(); c++) {
             layers[colors[c]].push_back(c);
         }
         return layers;
@@ -350,9 +407,30 @@ public:
 class PEGBuilder {
     int seedVal = 42;
 
-public:
-    PEGBuilder(int seed = 42) : seedVal(seed) {}
+    // Picks a check node with the lowest current degree from candidates (random tie-break).
+    int pickMinDegree(TannerGraph& g, vector<int>& candidates, mt19937& rng) {
+        int minDeg = INT_MAX;
+        for (int c : candidates) {
+            if (g.checkDegree(c) < minDeg) {
+                minDeg = g.checkDegree(c);
+            }
+        }
+        vector<int> best;
+        for (int c : candidates) {
+            if (g.checkDegree(c) == minDeg) {
+                best.push_back(c);
+            }
+        }
+        int idx = rng() % best.size();
+        return best[idx];
+    }
 
+public:
+    PEGBuilder(int seed = 42) {
+        seedVal = seed;
+    }
+
+    // BFS from variable node v returning distance to every check node (-1 if unreachable).
     vector<int> bfsDepth(TannerGraph& g, int v) {
         int n = g.numVars();
         int m = g.numChecks();
@@ -368,11 +446,13 @@ public:
         while (!q.empty()) {
             int u = q.front();
             q.pop();
+
             if (u < n) {
                 for (int c : g.varNeighbors(u)) {
-                    if (dist[n + c] == -1) {
-                        dist[n + c] = dist[u] + 1;
-                        q.push(n + c);
+                    int chkNode = n + c;
+                    if (dist[chkNode] == -1) {
+                        dist[chkNode] = dist[u] + 1;
+                        q.push(chkNode);
                     }
                 }
             } else {
@@ -384,7 +464,12 @@ public:
                 }
             }
         }
-        return {dist.begin() + n, dist.end()};
+
+        vector<int> checkDist(m, -1);
+        for (int c = 0; c < m; c++) {
+            checkDist[c] = dist[n + c];
+        }
+        return checkDist;
     }
 
     TannerGraph build(int n, int m) {
@@ -395,48 +480,43 @@ public:
         int varDeg = min(3, m);
         TannerGraph g(n, m);
         mt19937 rng((uint32_t)seedVal);
-        vector<int> allChecks(m);
-        iota(allChecks.begin(), allChecks.end(), 0);
 
-        auto pickMinDegree = [&](vector<int>& candidates) {
-            int minDeg = numeric_limits<int>::max();
-            for (int c : candidates) {
-                minDeg = min(minDeg, g.checkDegree(c));
-            }
-            vector<int> best;
-            for (int c : candidates) {
-                if (g.checkDegree(c) == minDeg) {
-                    best.push_back(c);
-                }
-            }
-            uniform_int_distribution<size_t> pick(0, best.size() - 1);
-            return best[pick(rng)];
-        };
+        vector<int> allChecks;
+        for (int c = 0; c < m; c++) {
+            allChecks.push_back(c);
+        }
 
-        for (int v = 0; v < n; ++v) {
-            for (int e = 0; e < varDeg; ++e) {
+        for (int v = 0; v < n; v++) {
+            for (int e = 0; e < varDeg; e++) {
                 int chosen = -1;
                 if (e == 0) {
-                    chosen = pickMinDegree(allChecks);
+                    chosen = pickMinDegree(g, allChecks, rng);
                 } else {
                     vector<int> dist = bfsDepth(g, v);
                     vector<int> unreachable;
                     vector<int> farthest;
                     int maxDist = -1;
-                    for (int c = 0; c < m; ++c) {
+
+                    for (int c = 0; c < m; c++) {
                         int d = dist[c];
                         if (d == -1) {
                             unreachable.push_back(c);
                         } else if (d > 1) {
                             if (d > maxDist) {
                                 maxDist = d;
-                                farthest = {c};
+                                farthest.clear();
+                                farthest.push_back(c);
                             } else if (d == maxDist) {
                                 farthest.push_back(c);
                             }
                         }
                     }
-                    chosen = pickMinDegree(unreachable.empty() ? farthest : unreachable);
+
+                    if (!unreachable.empty()) {
+                        chosen = pickMinDegree(g, unreachable, rng);
+                    } else {
+                        chosen = pickMinDegree(g, farthest, rng);
+                    }
                 }
                 g.addEdge(v, chosen);
             }

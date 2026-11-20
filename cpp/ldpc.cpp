@@ -2,6 +2,12 @@
 
 #include "graph.cpp"
 
+double clamp01(double x) {
+    if (x < 0.0) return 0.0;
+    if (x > 1.0) return 1.0;
+    return x;
+}
+
 // Systematic GF(2) LDPC encoder using upper-triangular elimination and Kahn's sort.
 class Encoder {
     int n = 0;
@@ -13,38 +19,48 @@ class Encoder {
     vector<int> order;
 
 public:
-    Encoder(TannerGraph& g) : n(g.numVars()), m(g.numChecks()) {
+    Encoder(TannerGraph& g) {
+        n = g.numVars();
+        m = g.numChecks();
         if (n == 0) {
             return;
         }
+
+        // Copy parity-check matrix H from the Tanner graph
         vector<vector<int>> H(m, vector<int>(n, 0));
-        for (int c = 0; c < m; ++c) {
+        for (int c = 0; c < m; c++) {
             for (int v : g.chkNeighbors(c)) {
                 H[c][v] = 1;
             }
         }
 
+        // Prefer putting parity bits at the right end of the codeword
         vector<int> colOrder;
-        colOrder.reserve(n);
         int tailStart = max(0, n - m);
-        for (int c = tailStart; c < n; ++c) {
+        for (int c = tailStart; c < n; c++) {
             colOrder.push_back(c);
         }
-        for (int c = tailStart - 1; c >= 0; --c) {
+        for (int c = tailStart - 1; c >= 0; c--) {
             colOrder.push_back(c);
         }
 
-        vector<int> isParity(n, 0);
+        // Step 1: Forward Gaussian elimination over GF(2) (XOR row operations)
+        vector<bool> isParity(n, false);
         int pivotRow = 0;
         for (int col : colOrder) {
             if (pivotRow >= m) {
                 break;
             }
+
+            // Pick the sparsest row with a 1 in this column
             int bestRow = -1;
-            int bestWeight = numeric_limits<int>::max();
-            for (int r = pivotRow; r < m; ++r) {
-                if (H[r][col]) {
-                    int w = accumulate(H[r].begin(), H[r].end(), 0);
+            int bestWeight = INT_MAX;
+            for (int r = pivotRow; r < m; r++) {
+                if (H[r][col] == 1) {
+                    int w = 0;
+                    for (int j = 0; j < n; j++) {
+                        w += H[r][j];
+                    }
                     if (w < bestWeight) {
                         bestWeight = w;
                         bestRow = r;
@@ -57,38 +73,40 @@ public:
 
             swap(H[pivotRow], H[bestRow]);
             parityPos.push_back(col);
-            isParity[col] = 1;
+            isParity[col] = true;
 
-            for (int r = pivotRow + 1; r < m; ++r) {
-                if (H[r][col]) {
-                    for (int j = 0; j < n; ++j) {
+            for (int r = pivotRow + 1; r < m; r++) {
+                if (H[r][col] == 1) {
+                    for (int j = 0; j < n; j++) {
                         H[r][j] ^= H[pivotRow][j];
                     }
                 }
             }
-            ++pivotRow;
+            pivotRow++;
         }
 
+        // Separate columns into parity positions and info (data) positions
         int rank = (int)parityPos.size();
         vector<int> colToParity(n, -1);
-        for (int p = 0; p < rank; ++p) {
+        for (int p = 0; p < rank; p++) {
             colToParity[parityPos[p]] = p;
         }
-        for (int v = 0; v < n; ++v) {
+        for (int v = 0; v < n; v++) {
             if (!isParity[v]) {
                 infoPos.push_back(v);
             }
         }
 
+        // Step 2: Build parity dependency DAG (q -> p means parity p needs parity q first)
         dataDeps.resize(rank);
         parityDeps.resize(rank);
         vector<vector<int>> dagAdj(rank);
         vector<int> inDegree(rank, 0);
 
-        for (int p = 0; p < rank; ++p) {
+        for (int p = 0; p < rank; p++) {
             int selfCol = parityPos[p];
-            for (int col = 0; col < n; ++col) {
-                if (col == selfCol || !H[p][col]) {
+            for (int col = 0; col < n; col++) {
+                if (col == selfCol || H[p][col] == 0) {
                     continue;
                 }
                 if (!isParity[col]) {
@@ -97,24 +115,25 @@ public:
                     int q = colToParity[col];
                     parityDeps[p].push_back(q);
                     dagAdj[q].push_back(p);
-                    ++inDegree[p];
+                    inDegree[p]++;
                 }
             }
         }
 
+        // Step 3: Kahn's Topological Sort to get safe parity computation order
         queue<int> q;
-        for (int p = 0; p < rank; ++p) {
+        for (int p = 0; p < rank; p++) {
             if (inDegree[p] == 0) {
                 q.push(p);
             }
         }
-        order.reserve(rank);
         while (!q.empty()) {
             int u = q.front();
             q.pop();
             order.push_back(u);
             for (int next : dagAdj[u]) {
-                if (--inDegree[next] == 0) {
+                inDegree[next]--;
+                if (inDegree[next] == 0) {
                     q.push(next);
                 }
             }
@@ -129,7 +148,7 @@ public:
             throw invalid_argument("Input data length must equal numInfoBits()");
         }
         Bits code(n, 0);
-        for (size_t i = 0; i < infoPos.size(); ++i) {
+        for (int i = 0; i < (int)infoPos.size(); i++) {
             if (data[i] != 0 && data[i] != 1) {
                 throw invalid_argument("Input data bits must be 0 or 1");
             }
@@ -153,7 +172,6 @@ public:
             throw invalid_argument("Codeword length must equal numVars()");
         }
         Bits data;
-        data.reserve(infoPos.size());
         for (int col : infoPos) {
             data.push_back(code[col]);
         }
@@ -180,10 +198,10 @@ public:
         if (bits.empty() || level <= 0.0) {
             return;
         }
-        bernoulli_distribution flip(clamp(level, 0.0, 1.0));
-        for (int& b : bits) {
-            if (b != BIT_UNKNOWN && flip(rng)) {
-                b ^= 1;
+        bernoulli_distribution flip(clamp01(level));
+        for (int i = 0; i < (int)bits.size(); i++) {
+            if (bits[i] != BIT_UNKNOWN && flip(rng)) {
+                bits[i] ^= 1;
             }
         }
     }
@@ -199,14 +217,16 @@ public:
         if (bits.empty() || level <= 0.0) {
             return;
         }
-        double p = clamp(level, 0.0, 1.0);
+        double p = clamp01(level);
         size_t n = bits.size();
         size_t target = (size_t)llround(p * (double)n);
         if (target == 0) {
             return;
         }
         if (target >= n) {
-            fill(bits.begin(), bits.end(), BIT_UNKNOWN);
+            for (size_t i = 0; i < n; i++) {
+                bits[i] = BIT_UNKNOWN;
+            }
             return;
         }
 
@@ -217,24 +237,25 @@ public:
 
         size_t erased = 0;
         size_t maxAttempts = target * 4 + 64;
-        for (size_t attempt = 0; attempt < maxAttempts && erased < target; ++attempt) {
+        for (size_t attempt = 0; attempt < maxAttempts && erased < target; attempt++) {
             size_t start = posDist(rng);
-            size_t end = min(n, start + min(lenDist(rng), target - erased));
-            for (size_t i = start; i < end && erased < target; ++i) {
+            size_t len = min(lenDist(rng), target - erased);
+            size_t end = min(n, start + len);
+            for (size_t i = start; i < end && erased < target; i++) {
                 if (bits[i] != BIT_UNKNOWN) {
                     bits[i] = BIT_UNKNOWN;
-                    ++erased;
+                    erased++;
                 }
             }
         }
 
         if (erased < target) {
             size_t offset = posDist(rng);
-            for (size_t step = 0; step < n && erased < target; ++step) {
+            for (size_t step = 0; step < n && erased < target; step++) {
                 size_t i = (offset + step) % n;
                 if (bits[i] != BIT_UNKNOWN) {
                     bits[i] = BIT_UNKNOWN;
-                    ++erased;
+                    erased++;
                 }
             }
         }
@@ -265,15 +286,15 @@ public:
         vector<int> mask((size_t)width * height, 0);
 
         if (!strokeList.empty()) {
-            for (auto& s : strokeList) {
+            for (BrushStroke s : strokeList) {
                 double r = max(0.5, s.radius);
                 int minX = max(0, (int)floor(s.x - r));
                 int maxX = min(width - 1, (int)ceil(s.x + r));
                 int minY = max(0, (int)floor(s.y - r));
                 int maxY = min(height - 1, (int)ceil(s.y + r));
-                for (int py = minY; py <= maxY; ++py) {
+                for (int py = minY; py <= maxY; py++) {
                     double dy = py - s.y;
-                    for (int px = minX; px <= maxX; ++px) {
+                    for (int px = minX; px <= maxX; px++) {
                         double dx = px - s.x;
                         if (dx * dx + dy * dy <= r * r) {
                             mask[(size_t)py * width + px] = 1;
@@ -288,14 +309,14 @@ public:
             return mask;
         }
 
-        double p = clamp(level, 0.0, 1.0);
+        double p = clamp01(level);
         int minDim = min(width, height);
         double halfBand = max(1.0, p * minDim * 0.55);
         double normX = max(1, width - 1);
         double normY = max(1, height - 1);
-        for (int py = 0; py < height; ++py) {
+        for (int py = 0; py < height; py++) {
             double ny = py / normY;
-            for (int px = 0; px < width; ++px) {
+            for (int px = 0; px < width; px++) {
                 double diagDist = abs(px / normX - ny) * minDim * 0.70710678;
                 if (diagDist <= halfBand) {
                     mask[(size_t)py * width + px] = 1;
@@ -315,15 +336,16 @@ public:
             return;
         }
         size_t bitsPerPixel = (size_t)channels * 8U;
-        for (size_t i = 0; i < bits.size(); ++i) {
-            if (mask[(i / bitsPerPixel) % mask.size()] != 0) {
+        for (size_t i = 0; i < bits.size(); i++) {
+            size_t pix = (i / bitsPerPixel) % mask.size();
+            if (mask[pix] != 0) {
                 bits[i] = BIT_UNKNOWN;
             }
         }
     }
 };
 
-// Queue-based erasure peeling decoder (processes one Kahn wave per step).
+// Queue-based erasure peeling decoder (processes one wave per step).
 class PeelingDecoder {
     TannerGraph* g;
     int maxRounds = 100;
@@ -334,10 +356,15 @@ class PeelingDecoder {
     bool initialized = false;
 
 public:
-    PeelingDecoder(TannerGraph& graph, int maxR = 100) : g(&graph), maxRounds(maxR) {}
+    PeelingDecoder(TannerGraph& graph, int maxR = 100) {
+        g = &graph;
+        maxRounds = maxR;
+    }
 
     void reset() {
-        q = {};
+        while (!q.empty()) {
+            q.pop();
+        }
         unknownCount.clear();
         lastFixed.clear();
         initialized = false;
@@ -354,9 +381,11 @@ public:
 
         if (!initialized) {
             unknownCount.assign(m, 0);
-            for (int c = 0; c < m; ++c) {
+            for (int c = 0; c < m; c++) {
                 for (int v : g->chkNeighbors(c)) {
-                    unknownCount[c] += (bits[v] == BIT_UNKNOWN);
+                    if (bits[v] == BIT_UNKNOWN) {
+                        unknownCount[c]++;
+                    }
                 }
                 if (unknownCount[c] == 1) {
                     q.push(c);
@@ -368,17 +397,18 @@ public:
             return false;
         }
 
-        size_t waveSize = q.size();
-        for (size_t i = 0; i < waveSize; ++i) {
+        int waveSize = (int)q.size();
+        for (int i = 0; i < waveSize; i++) {
             int c = q.front();
             q.pop();
+
             int target = -1;
             int unknownSeen = 0;
             int parity = 0;
             for (int v : g->chkNeighbors(c)) {
                 if (bits[v] == BIT_UNKNOWN) {
                     target = v;
-                    ++unknownSeen;
+                    unknownSeen++;
                 } else {
                     parity ^= (bits[v] & 1);
                 }
@@ -386,16 +416,18 @@ public:
             if (unknownSeen != 1 || target == -1) {
                 continue;
             }
+
             bits[target] = parity;
             lastFixed.push_back(target);
             for (int c2 : g->varNeighbors(target)) {
-                if (--unknownCount[c2] == 1) {
+                unknownCount[c2]--;
+                if (unknownCount[c2] == 1) {
                     q.push(c2);
                 }
             }
         }
 
-        ++rounds;
+        rounds++;
         return !lastFixed.empty();
     }
 
@@ -404,7 +436,7 @@ public:
             throw invalid_argument("Bit vector length must equal numVars()");
         }
         vector<int> unknowns;
-        for (int v = 0; v < g->numVars(); ++v) {
+        for (int v = 0; v < g->numVars(); v++) {
             if (bits[v] == BIT_UNKNOWN) {
                 unknowns.push_back(v);
             }
@@ -425,11 +457,17 @@ class BitFlipDecoder {
     set<Bits> visitedStates;
 
 public:
-    BitFlipDecoder(TannerGraph& graph, int maxR = 25)
-        : g(&graph), maxRounds(maxR), layerGroups(GraphAnalyzer(graph).layerSchedule()) {}
+    BitFlipDecoder(TannerGraph& graph, int maxR = 25) {
+        g = &graph;
+        maxRounds = maxR;
+        layerGroups = GraphAnalyzer(graph).layerSchedule();
+    }
 
-    BitFlipDecoder(TannerGraph& graph, vector<vector<int>> preLayers, int maxR = 25)
-        : g(&graph), maxRounds(maxR), layerGroups(preLayers) {}
+    BitFlipDecoder(TannerGraph& graph, vector<vector<int>> preLayers, int maxR = 25) {
+        g = &graph;
+        maxRounds = maxR;
+        layerGroups = preLayers;
+    }
 
     void reset() {
         lastFixed.clear();
@@ -451,8 +489,8 @@ public:
         vector<int> knownChecks(n, 0);
         int failedCount = 0;
 
-        for (auto& layer : layerGroups) {
-            for (int c : layer) {
+        for (int l = 0; l < (int)layerGroups.size(); l++) {
+            for (int c : layerGroups[l]) {
                 int parity = 0;
                 bool hasUnknown = false;
                 for (int v : g->chkNeighbors(c)) {
@@ -466,12 +504,14 @@ public:
                     continue;
                 }
                 for (int v : g->chkNeighbors(c)) {
-                    ++knownChecks[v];
+                    knownChecks[v]++;
                     if (parity != 0) {
-                        ++votes[v];
+                        votes[v]++;
                     }
                 }
-                failedCount += (parity != 0);
+                if (parity != 0) {
+                    failedCount++;
+                }
             }
         }
         if (failedCount == 0) {
@@ -480,13 +520,18 @@ public:
 
         int maxVotes = 0;
         vector<int> flipped;
-        for (int v = 0; v < n; ++v) {
-            if (bits[v] == BIT_UNKNOWN || knownChecks[v] == 0 || votes[v] * 2 <= knownChecks[v]) {
+        for (int v = 0; v < n; v++) {
+            if (bits[v] == BIT_UNKNOWN || knownChecks[v] == 0) {
+                continue;
+            }
+            // Only consider bits where strictly more than half of checks failed
+            if (votes[v] * 2 <= knownChecks[v]) {
                 continue;
             }
             if (votes[v] > maxVotes) {
                 maxVotes = votes[v];
-                flipped = {v};
+                flipped.clear();
+                flipped.push_back(v);
             } else if (votes[v] == maxVotes) {
                 flipped.push_back(v);
             }
@@ -500,6 +545,7 @@ public:
             candidate[v] ^= 1;
         }
 
+        // Break 2-state oscillation loops if we are about to revisit an old state
         if (visitedStates.count(candidate) > 0) {
             if (flipped.size() <= 1) {
                 return false;
@@ -515,7 +561,7 @@ public:
         visitedStates.insert(bits);
         bits = candidate;
         lastFixed = flipped;
-        ++rounds;
+        rounds++;
         return true;
     }
 
